@@ -1,0 +1,92 @@
+/**
+ * Contoh bot memakai GASPOL v10.0.0
+ *
+ * Setup:
+ *  1. Project Settings > Script Properties > tambah BOT_TOKEN = token dari @BotFather
+ *  2. Deploy > New deployment > Web app (Execute as: Me, Access: Anyone)
+ *  3. Isi WEBAPP_URL di bawah, lalu jalankan fungsi setupWebhook() sekali
+ *  4. Jalankan selfTest() untuk cek logika tanpa menyentuh Telegram
+ */
+
+var WEBAPP_URL = 'GANTI_DENGAN_URL_WEB_APP_/exec';
+
+function buildBot_(token, opts) {
+  var bot = new init(token, opts); // token kosong -> pakai Script Property BOT_TOKEN
+
+  // Middleware: contoh log semua pesan masuk
+  bot.use(function (ctx, next) {
+    Logger.log('[' + (ctx.from ? ctx.from.id : '?') + '] ' + (ctx.text || ctx.data || '(non-teks)'));
+    next();
+  });
+
+  bot.cmd('start', function (ctx) {
+    var nama = Helper.escapeHTML(ctx.from ? ctx.from.first_name : 'bro');
+    ctx.reply(
+      'Halo ' + Helper.bold(nama) + '! GASPOL jalan.\nCoba /echo teks kamu, atau tekan tombol:',
+      { reply_markup: Markup.inlineKeyboard([
+          Button.callback('Ping', 'ping'),
+          Button.callback('Hitung klik', 'count'),
+          Button.url('Dokumentasi', 'https://core.telegram.org/bots/api')
+        ], 2) }
+    );
+  });
+
+  bot.cmd('echo', function (ctx) {
+    ctx.reply(ctx.payload ? Helper.escapeHTML(ctx.payload) : 'Pakai: /echo teks');
+  });
+
+  bot.hears(['halo', /^hai\b/i], function (ctx) { ctx.reply('halo juga'); });
+
+  bot.action('ping', function (ctx) { ctx.answerCbQuery('pong!'); });
+
+  bot.action('count', function (ctx) {
+    ctx.session.klik = (ctx.session.klik || 0) + 1;       // session otomatis tersimpan
+    ctx.answerCbQuery('Klik ke-' + ctx.session.klik);
+  });
+
+  bot.on('photo', function (ctx) { ctx.reply('Fotonya sudah masuk.'); });
+
+  bot.onError(function (err, ctx) {
+    Logger.log('Error: ' + err);
+    try { ctx.reply('Ups, ada error di sisi bot.'); } catch (e) {}
+  });
+
+  return bot;
+}
+
+var _bot;
+function getBot_() { return _bot || (_bot = buildBot_()); }
+
+function doPost(e) { return getBot_().doPost(e); }
+
+function setupWebhook() {
+  var bot = getBot_();
+  Logger.log(JSON.stringify(bot.setWebhook(WEBAPP_URL)));
+  Logger.log(JSON.stringify(bot.setCommands([
+    { command: 'start', description: 'Mulai' },
+    { command: 'echo', description: 'Ulangi teks kamu' }
+  ])));
+}
+
+// Tes offline: Telegram API diganti stub, jadi hasilnya jujur (bukan sekadar log "OK")
+function selfTest() {
+  var sent = [];
+  var bot = buildBot_('123:TEST', { dedupe: false, persist_session: false });
+  bot._api._call = function (method, params) { sent.push({ method: method, params: params }); return { ok: true }; };
+
+  function msg(text) {
+    return { message: { message_id: 1, chat: { id: 1, type: 'private' }, from: { id: 1, first_name: 'Tester' }, text: text } };
+  }
+
+  bot.handleUpdate(msg('/start'));
+  bot.handleUpdate(msg('/echo a <b> c'));
+  bot.handleUpdate({ callback_query: { id: 'cb1', data: 'count', from: { id: 1 },
+    message: { message_id: 2, chat: { id: 1, type: 'private' }, from: { id: 999 } } } });
+
+  var m = sent.map(function (s) { return s.method; });
+  if (m[0] !== 'sendMessage') throw new Error('GAGAL: /start tidak membalas');
+  if (sent[0].params.parse_mode !== 'HTML') throw new Error('GAGAL: HTML otomatis tidak aktif');
+  if (sent[1].params.text !== 'a &lt;b&gt; c') throw new Error('GAGAL: escape /echo salah -> ' + sent[1].params.text);
+  if (m[2] !== 'answerCallbackQuery') throw new Error('GAGAL: action tidak jalan');
+  Logger.log('selfTest LULUS (' + sent.length + ' panggilan API tersimulasi)');
+}
